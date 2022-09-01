@@ -2,8 +2,20 @@ import express from "express"
 import cors from "cors"
 import dayjs from "dayjs"
 import joi from "joi"
+import {MongoClient} from "mongodb"
+import dotenv from "dotenv"
+
+const mongoClient = new MongoClient("mongodb://localhost:27017")
+let db
+
+mongoClient
+    .connect()
+    .then(() => {
+    db = mongoClient.db("test")
+})
 
 const server = express()
+
 server
     .use(cors())
     .use(express.json())
@@ -44,14 +56,23 @@ server.post("/participants", (req, res) => {
         time: dayjs().format("HH:mm:ss")
     }
 
+    db.collection("participants").insertOne(partipant)
+    db.collection("messages").insertOne(welcomeMessage)
     res.sendStatus(201)
 })
 
-server.get("/participants", (req, res) => {
-
+server.get("/participants", async (req, res) => {
+    
+    try {
+        const participants = await db.collection("participants").find().toArray()
+        participants.forEach(value => value._id = undefined)
+        res.send(participants)
+    } catch (error) {
+        res.status(400).send(error)
+    }
 })
 
-server.post("/messages", (req, res) => {
+server.post("/messages", async (req, res) => {
 
     const {to, text, type} = req.body
     const {user} = req.headers
@@ -68,14 +89,46 @@ server.post("/messages", (req, res) => {
         return
     }
 
+    try {
+        const participants = await db.collection("participants").find().toArray()
+        const searchParticipant = participants.find(value => value.name === user)
+
+        if(!searchParticipant) {
+            res.sendStatus(422)
+            return
+        }
+
+    } catch (error) {
+        
+    }
+
     const message = {from: user, to, text, type, time: dayjs().format("HH:mm:ss")}
+    db.collection("messages").insertOne(message)
     res.status(201).send(message)
 })
 
-server.get("/messages", (req, res) => {
+server.get("/messages", async (req, res) => {
 
-    const {User} = req.headers
+    const {user} = req.headers
     const {limit} = req.query
+
+    try {
+        const messages = await db.collection("messages").find().toArray()
+        console.log(messages)
+        const filteredMessages = messages.filter(value => {
+            if(value.type === "message" || (value.from === user || value.to === user)) {
+                return value
+            }
+        })
+        if (limit) {
+            res.status(200).send(filteredMessages.slice(-limit))
+            console.log(limit)
+            return
+        }
+        res.status(200).send(filteredMessages)
+    } catch (error) {
+        res.sendStatus(400)
+    }
 })
 
 server.post("/status", (req, res) => {

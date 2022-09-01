@@ -51,11 +51,10 @@ async function checkParticipants() {
 }
 setInterval(checkParticipants, 15000)
 
-function filterMessages(type, from, to, user, value) {
+function filterMessages(type, from, to, user) {
     if(type !== "private_message" || (from === user || to === user)) {
-        return value
+        return true
     }
-    console.log(type, from, to, user, value)
 }
 
 server.post("/participants", async (req, res) => {
@@ -155,11 +154,11 @@ server.get("/messages", async (req, res) => {
     try {
         const messages = await db.collection("messages").find().toArray()
         const filteredMessages = messages.filter(value => {
-            if(value.type !== "private_message" || (value.from === user || value.to === user)) {
+            const {type, from, to} = value
+            /*if(value.type !== "private_message" || (value.from === user || value.to === user)) {
                 return value
-            }
-            //console.log(value)
-            //filterMessages(value.type, value.from, value.to, user, value)
+            }*/
+            return filterMessages(type, from, to, user)
         })
         if (limit) {
             res.status(200).send(filteredMessages.slice(-limit))

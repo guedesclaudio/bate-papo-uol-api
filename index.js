@@ -2,8 +2,10 @@ import express from "express"
 import cors from "cors"
 import dayjs from "dayjs"
 import joi from "joi"
-import {MongoClient, ObjectId} from "mongodb"
 import dotenv from "dotenv"
+import {MongoClient, ObjectId} from "mongodb"
+import { strict as assert } from "assert"
+import { stripHtml } from "string-strip-html"
 dotenv.config()
 
 const mongoClient = new MongoClient(process.env.MONGO_URI)
@@ -65,11 +67,12 @@ function filterMessages(type, from, to, user) {
 
 server.post("/participants", async (req, res) => {
 
-    const {name} = req.body
-    const schema = joi.object({
+    const name = req.body.name.trim()
+
+    const schemaName = joi.object({
         name: joi.string().required()
     })
-    const {value, error} = schema.validate({name})
+    const {value, error} = schemaName.validate({name})
     
     if (error) {
         res.sendStatus(422)
@@ -77,10 +80,9 @@ server.post("/participants", async (req, res) => {
     }
 
     try {
-        const participants = await db.collection("participants").find().toArray()
-        const searchParticipant = participants.find(value => value.name === name)
+        const checkParticipant = await db.collection("participants").findOne({name: name})
 
-        if (searchParticipant) {
+        if (checkParticipant) {
             res.sendStatus(409)
             return 
         }
@@ -133,26 +135,21 @@ server.post("/messages", async (req, res) => {
     }
 
     try {
-        const participants = await db.collection("participants").find().toArray()
-        const searchParticipant = participants.find(value => value.name === user)
-
-        if(!searchParticipant) {
+        const participant = await db.collection("participants").findOne({name: user})
+        
+        if(!participant) {
             res.sendStatus(422)
             return
         }
 
-    } catch (error) {
-        res.sendStatus(500)
-    }
-
-    message = {from: user, to, text, type, time: dayjs().format("HH:mm:ss")}
-
-    try {
+        message = {from: user, to, text, type, time: dayjs().format("HH:mm:ss")}
         await db.collection("messages").insertOne(message)
         res.sendStatus(201)
+
     } catch (error) {
         res.sendStatus(500)
     }
+
 })
 
 server.get("/messages", async (req, res) => {
@@ -181,15 +178,14 @@ server.post("/status", async (req, res) => {
     const {user} = req.headers
 
     try {
-        const participants = await db.collection("participants").find().toArray()
-        const searchParticipant = participants.find(value => value.name === user)
-        const participant = {name: user, lastStatus: Date.now()}
+        const checkParticipant = await db.collection("participants").findOne({name: user})
 
-        if (!searchParticipant) {
+        if (!checkParticipant) {
             res.sendStatus(404)
             return
         }
 
+        const participant = {name: user, lastStatus: Date.now()}
         await db.collection("participants").deleteOne({name: user})
         await db.collection("participants").insertOne(participant)
         res.sendStatus(200)
@@ -214,6 +210,7 @@ server.delete("/messages/:id", async (req, res) => {
             res.sendStatus(401)
             return
         }
+
         await db.collection("messages").deleteOne({_id: new ObjectId(id)})
         res.sendStatus(200)
 
@@ -226,7 +223,6 @@ server.put("/messages/:id", async (req, res) => {
     const {user} = req.headers
     const {id} = req.params
     const {to, text, type} = req.body
-
     const {value, error} = schemaMessage.validate({to, text, type})
     
     if(error) {
@@ -236,31 +232,25 @@ server.put("/messages/:id", async (req, res) => {
 
     try {
         const participant = await db.collection("participants").findOne({name: user})
+        const message = await db.collection("messages").findOne({_id: new ObjectId(id)})
 
         if(!participant) {
             res.sendStatus(422)
             return
         }
+        if(!message) {
+            res.sendStatus(404)
+        }
+        if (message.from !== user) {
+            res.sendStatus(401)
+        }
+
+        await db.collection("messages").updateOne({_id: new ObjectId(id)}, {$set: req.body})
+        res.sendStatus(200)
 
     } catch (error) {
         res.sendStatus(500)
     }
-
-    try {
-        const message = await db.collection("messages").findOne({_id: new ObjectId(id)})
-        
-        if(!message) {
-            res.sendStatus(404)
-        }
-
-        if (message.from !== user) {
-            res.sendStatus(401)
-        }
-        await db.collection("messages").updateOne({_id: new ObjectId(id)}, {$set: req.body})
-    } catch (error) {
-        
-    }
-
 })
 
 server.listen(5000, () => console.log("Listening on port 5000"))

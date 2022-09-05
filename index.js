@@ -2,7 +2,7 @@ import express from "express"
 import cors from "cors"
 import dayjs from "dayjs"
 import joi from "joi"
-import {MongoClient} from "mongodb"
+import {MongoClient, ObjectId} from "mongodb"
 import dotenv from "dotenv"
 dotenv.config()
 
@@ -20,6 +20,12 @@ const server = express()
 server
     .use(cors())
     .use(express.json())
+
+const schemaMessage = joi.object({
+    to: joi.string().required(),
+    text: joi.string().required(),
+    type: joi.string().required().valid("message", "private_message")
+})
 
 async function checkParticipants() {
 
@@ -40,7 +46,7 @@ async function checkParticipants() {
                     type: "status",
                     time: dayjs().format("HH:mm:ss")
                 }
-    
+                
                 db.collection("participants").deleteOne({name: value.name})
                 db.collection("messages").insertOne(farewellMessage)
             })
@@ -94,20 +100,23 @@ server.post("/participants", async (req, res) => {
         time: dayjs().format("HH:mm:ss")
     }
 
-    db.collection("participants").insertOne(participant)
-    db.collection("messages").insertOne(welcomeMessage)
-    res.sendStatus(201)
+    try {
+        await db.collection("participants").insertOne(participant)
+        await db.collection("messages").insertOne(welcomeMessage)
+        res.sendStatus(201)
+    } catch (error) {
+        res.sendStatus(500)
+    }
 })
 
 server.get("/participants", async (req, res) => {
     
     try {
         const participants = await db.collection("participants").find().toArray()
-        participants.forEach(value => value._id = undefined)
         res.send(participants)
 
     } catch (error) {
-        res.status(400).send(error)
+        res.sendStatus(500)
     }
 })
 
@@ -115,14 +124,9 @@ server.post("/messages", async (req, res) => {
 
     const {to, text, type} = req.body
     const {user} = req.headers
-    const schema = joi.object({
-        to: joi.string().required(),
-        text: joi.string().required(),
-        type: joi.string().required().valid("message", "private_message")
-    })
-
-    const {value, error} = schema.validate({to, text, type})
-
+    let message = {}
+    const {value, error} = schemaMessage.validate({to, text, type})
+    
     if(error) {
         res.sendStatus(422)
         return
@@ -138,12 +142,17 @@ server.post("/messages", async (req, res) => {
         }
 
     } catch (error) {
-        res.sendStatus(400)
+        res.sendStatus(500)
     }
 
-    const message = {from: user, to, text, type, time: dayjs().format("HH:mm:ss")}
-    db.collection("messages").insertOne(message)
-    res.status(201).send(message)
+    message = {from: user, to, text, type, time: dayjs().format("HH:mm:ss")}
+
+    try {
+        await db.collection("messages").insertOne(message)
+        res.sendStatus(201)
+    } catch (error) {
+        res.sendStatus(500)
+    }
 })
 
 server.get("/messages", async (req, res) => {
@@ -155,9 +164,6 @@ server.get("/messages", async (req, res) => {
         const messages = await db.collection("messages").find().toArray()
         const filteredMessages = messages.filter(value => {
             const {type, from, to} = value
-            /*if(value.type !== "private_message" || (value.from === user || value.to === user)) {
-                return value
-            }*/
             return filterMessages(type, from, to, user)
         })
         if (limit) {
@@ -166,7 +172,7 @@ server.get("/messages", async (req, res) => {
         }
         res.status(200).send(filteredMessages)
     } catch (error) {
-        res.sendStatus(400)
+        res.sendStatus(500)
     }
 })
 
@@ -184,13 +190,77 @@ server.post("/status", async (req, res) => {
             return
         }
 
-        db.collection("participants").deleteOne({name: user})
-        db.collection("participants").insertOne(participant)
+        await db.collection("participants").deleteOne({name: user})
+        await db.collection("participants").insertOne(participant)
         res.sendStatus(200)
 
     } catch (error) {
         res.sendStatus(400)
     }
+})
+
+server.delete("/messages/:id", async (req, res) => {
+    const {user} = req.headers
+    const {id} = req.params
+
+    try {
+        const message = await db.collection("messages").findOne({_id: new ObjectId(id)})
+        
+        if (!message) {
+            res.sendStatus(404)
+            return
+        }
+        if (message.from !== user) {
+            res.sendStatus(401)
+            return
+        }
+        await db.collection("messages").deleteOne({_id: new ObjectId(id)})
+        res.sendStatus(200)
+
+    } catch (error) {
+        res.sendStatus(500)
+    }
+})
+
+server.put("/messages/:id", async (req, res) => {
+    const {user} = req.headers
+    const {id} = req.params
+    const {to, text, type} = req.body
+
+    const {value, error} = schemaMessage.validate({to, text, type})
+    
+    if(error) {
+        res.sendStatus(422)
+        return
+    }
+
+    try {
+        const participant = await db.collection("participants").findOne({name: user})
+
+        if(!participant) {
+            res.sendStatus(422)
+            return
+        }
+
+    } catch (error) {
+        res.sendStatus(500)
+    }
+
+    try {
+        const message = await db.collection("messages").findOne({_id: new ObjectId(id)})
+        
+        if(!message) {
+            res.sendStatus(404)
+        }
+
+        if (message.from !== user) {
+            res.sendStatus(401)
+        }
+        await db.collection("messages").updateOne({_id: new ObjectId(id)}, {$set: req.body})
+    } catch (error) {
+        
+    }
+
 })
 
 server.listen(5000, () => console.log("Listening on port 5000"))

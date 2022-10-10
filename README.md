@@ -36,6 +36,6 @@ npm i
 node ./src/index.js
 ```
 4. Servidor:
-O servidor roda na porta 4000
+O servidor roda na porta 5000
 
 <br>
